@@ -141,6 +141,15 @@ if [[ $SKIP_STARTUP -eq 0 ]]; then
       DATABASE_URL="postgresql+psycopg://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$PG_DB" \
       APP_ENV=verify \
       LOG_LEVEL=INFO \
+      # Phase 5.0 C1 — Secrets sub-model env-gates SESSION_SECRET /
+      # CSRF_SECRET in any non-development env. The verify harness uses
+      # APP_ENV=verify, so we provide dev-only placeholder secrets.
+      # These values exist ONLY to satisfy configuration validation at
+      # process startup. They are NOT consumed by any runtime subsystem
+      # in Phase 5.0 (auth lands as Phase 5.4, the first real consumer).
+      # Do not reuse these values in any non-test environment.
+      SESSION_SECRET="verify-session-secret-not-used-in-v1" \
+      CSRF_SECRET="verify-csrf-secret-not-used-in-v1" \
       nohup uv run --project "$REPO_ROOT" uvicorn backend.main:app \
         --host "$BACKEND_HOST" --port "$BACKEND_PORT" --no-access-log \
         >"$LOG_FILE" 2>&1 &
@@ -380,6 +389,9 @@ done
     DATABASE_URL="postgresql+psycopg://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$PG_DB" \
     APP_ENV=verify \
     LOG_LEVEL=INFO \
+    # Phase 5.0 C1 — dev-only placeholder secrets (see first boot).
+    SESSION_SECRET="verify-session-secret-not-used-in-v1" \
+    CSRF_SECRET="verify-csrf-secret-not-used-in-v1" \
     nohup uv run --project "$REPO_ROOT" uvicorn backend.main:app \
       --host "$BACKEND_HOST" --port "$BACKEND_PORT" --no-access-log \
       >"$EVIDENCE_DIR/02_restart_startup.log" 2>&1 &

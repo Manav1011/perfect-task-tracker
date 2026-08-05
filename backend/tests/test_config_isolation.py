@@ -48,18 +48,30 @@ import pytest
 # allowlist that turns up in a subsequent change gets a build fail.
 ALLOWED_CONFIG_READERS: frozenset[str] = frozenset(
     {
+        # Allowlist paths are *intentionally* backend-relative
+        # (`config/<file>.py`), WITHOUT the `backend/` prefix.
+        # `_rel()` strips the absolute backend/ prefix before matching
+        # (see its docstring). Do NOT reintroduce the `backend/` prefix
+        # here — it would silently re-break the isolation check
+        # (Phase 5.0 C1 surfaced this latent bug).
+        #
         # The configuration boundary itself — Pydantic BaseSettings does
         # the env reads internally; this module wraps that with
         # validation, defaults, and the precedence rule.
-        "backend/config/settings.py",
-        "backend/config/database.py",
+        "config/settings.py",
+        "config/database.py",
+        # Phase 5.0 C1 — secrets sub-model. Same pattern as
+        # database.py: Pydantic reads env aliases (SESSION_SECRET /
+        # CSRF_SECRET) and the validator consults APP_ENV via os.environ
+        # to enforce the non-dev gate.
+        "config/secrets.py",
         # Lazy engine construction runs before app.state exists.
         # Per the carve-out documented in CONFIGURATION_INVENTORY.md and
         # the plan's "Startup-time vs runtime-read classification".
-        "backend/database/session.py",
+        "database/session.py",
         # Alembic migration tool — runs in its own process, never as
         # part of a request.
-        "backend/alembic/env.py",
+        "alembic/env.py",
     }
 )
 
@@ -116,11 +128,22 @@ def _find_env_reads(module_path: Path) -> list[tuple[int, str]]:
 
 
 def _rel(p: Path) -> str:
-    """Return path with the `backend/` prefix normalised.
+    """Return the path as the allowlist expects it: strip the absolute
+    `backend/` prefix so the value is `config/secrets.py`-shaped.
 
-    `_all_backend_modules()` walks `backend/`, so the relative path is
-    already `config/settings.py`-shaped. The allowlist is repo-relative
-    (`backend/config/settings.py`). Strip the prefix before comparing.
+    The allowlist stores paths *without* the `backend/` prefix because
+    `_all_backend_modules()` walks a `Path(...)` rooted at `backend/`.
+    Comparing an absolute `backend/...` path against allowlist entries
+    is incorrect — the prefix must be stripped first.
+
+    Phase 5.0 C1 surfaced this: the previous allowlist used
+    `backend/config/secrets.py`, but `_rel()` returned
+    `config/secrets.py`. The mismatch was a latent bug that
+    previously never tripped because the existing allowlisted
+    modules (settings.py, database.py, session.py, env.py) contain
+    no `os.environ` reads. Adding a `Secrets` validator with one
+    explicit `os.getenv("APP_ENV", ...)` finally triggered the
+    mismatch.
     """
     return str(p).removeprefix(str(Path(__file__).resolve().parent.parent) + "/")
 
@@ -152,11 +175,16 @@ def test_configuration_isolation_no_direct_env_reads_outside_config() -> None:
 def test_allowlisted_module_is_actually_present(allowed_path: str) -> None:
     """Sanity: an entry in ALLOWED_CONFIG_READERS must exist on disk.
     Catches typos in the allowlist (a renamed/moved module would
-    silently become policy without enforcement)."""
+    silently become policy without enforcement).
+
+    Allowlist entries are backend-rooted (e.g. `config/settings.py`);
+    on disk they live at `<repo_root>/backend/<allowlist entry>`.
+    """
     repo_root = Path(__file__).resolve().parent.parent.parent
-    assert (repo_root / allowed_path).exists(), (
+    backend_root = repo_root / "backend"
+    assert (backend_root / allowed_path).exists(), (
         f"ALLOWED_CONFIG_READERS contains {allowed_path!r}, but that "
-        f"file does not exist. Remove the stale entry."
+        f"file does not exist under <repo>/backend/. Remove the stale entry."
     )
 
 

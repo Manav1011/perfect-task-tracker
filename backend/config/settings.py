@@ -24,6 +24,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.config.database import DatabaseSettings
+from backend.config.secrets import Secrets
 
 
 # Allowed log levels — single source of truth for the validator below
@@ -50,6 +51,12 @@ class Settings(BaseSettings):
     Database: `database: DatabaseSettings` is the sub-model that owns
     the POSTGRES_* / DATABASE_URL precedence contract. See
     `backend.config.database`.
+
+    Secrets: `secrets: Secrets` is the sub-model added in Phase 5.0
+    C1. It is env-gated: required when `app_env != "development"`.
+    No consumers wire it today (auth = Phase 5.4 future); the seam
+    exists so the rule is enforced at construction time. See
+    `backend.config.secrets`.
     """
 
     model_config = SettingsConfigDict(
@@ -80,6 +87,13 @@ class Settings(BaseSettings):
     # constructed DatabaseSettings matches the lifetime of Settings
     # (frozen at startup).
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+
+    # ---- Secrets (sub-model, env-gated by app_env) -----
+    # Phase 5.0 C1: typed boundary for SESSION_SECRET / CSRF_SECRET.
+    # Construction enforces the env-gating rule documented in
+    # `backend.config.secrets`. No consumers wire this today (auth =
+    # Phase 5.4 future); the seam exists so the rule is enforced.
+    secrets: Secrets = Field(default_factory=Secrets)
 
     @property
     def database_url(self) -> str:

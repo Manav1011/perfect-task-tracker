@@ -1,10 +1,12 @@
 # Configuration Inventory — Phase 3.3 post-refactor audit
 
-- **Date:** 2026-08-05
-- **Author:** Phase 3.3 implementation (5 incremental commits)
+- **Date:** 2026-08-05 (updated Phase 5.0 C1: secrets seam added)
+- **Author:** Phase 3.3 implementation (5 incremental commits);
+  Phase 5.0 C1 adds the `Secrets` sub-model.
 - **Status:** LOCKED — every addition/removal below has been applied
   in code. New settings MUST extend this document + add tests.
-- **Cross-reference:** `docs/TECH_SPEC.md §13g` and `ADR-0021`.
+- **Cross-reference:** `docs/TECH_SPEC.md §13g`, `§13h`,
+  ADR-0021, and ADR-0022 (Phase 5.0).
 - **Companion to the 4 AST isolation tests** (`test_api_isolation.py`,
   `test_services_isolation.py`, `tests/workspace/test_isolation.py`,
   `tests/index/test_isolation.py`, `tests/search/test_isolation.py`)
@@ -38,14 +40,19 @@ hot-reload policy table (§5), and a test in `backend/tests/config/`.
 
 ---
 
-## 1. The typed layer (post-Phase 3.3)
+## 1. The typed layer (post-Phase 5.0 C1)
 
-Two Pydantic models live in `backend.config/`:
+Three Pydantic models live in `backend.config/`:
 
 - `Settings` (top-level, frozen, validated) — application identity,
-  filesystem substrate, and a nested `database` sub-model.
+  filesystem substrate, a nested `database` sub-model, and a nested
+  `secrets` sub-model (Phase 5.0 C1).
 - `DatabaseSettings` (sub-model, frozen, validated) — the
   DATABASE_URL / POSTGRES_* precedence rule lives here.
+- `Secrets` (sub-model, frozen, validated, Phase 5.0 C1) —
+  `session_secret` / `csrf_secret`. Env-gated: required when
+  `app_env != "development"`. No consumers wired yet — the seam
+  exists; auth (Phase 5.4 future) is the first consumer.
 
 ### `Settings` fields
 
@@ -57,6 +64,7 @@ Two Pydantic models live in `backend.config/`:
 | `workspace_path` | `WORKSPACE_PATH` | `Path("./data/workspace")` | INFRASTRUCTURE | RESTART ONLY | `Settings` | `Settings` | DONE (Phase 3.3) — formerly hardcoded in `api/dependencies.py:36` |
 | `database` | (nested) | `DatabaseSettings()` | INFRASTRUCTURE | RESTART ONLY | `DatabaseSettings` | `DatabaseSettings` | DONE (Phase 3.3) — sub-model + precedence rule |
 | `database_url` (property) | — | resolves from `database` | INFRASTRUCTURE | RESTART ONLY | `Settings.database` | `Settings.database` | DONE (Phase 3.3) — flat field → sub-model property |
+| `secrets` | (nested) | `Secrets()` (env-gated; in dev, both secrets may be unset) | OPERATIONAL | RESTART ONLY | `Secrets` | `Secrets` | DONE (Phase 5.0 C1) — sub-model + env-gated construction rule; no consumers wired (auth is Phase 5.4 future) |
 
 Removed in Phase 3.3:
 - `host` (was `"0.0.0.0"`) — moved to PROCESS / `--host`.
@@ -76,6 +84,34 @@ Removed in Phase 3.3:
 The `database_url` field is `None` until the `model_validator`
 resolves it via the precedence rule (DATABASE_URL > full POSTGRES_*
 > dev default; partial POSTGRES_* raises `ValueError`).
+
+### `Secrets` fields (Phase 5.0 C1)
+
+| Field | Env alias | Default | Reload model | Current owner | Target owner | Migration |
+| --- | --- | --- | --- | --- | --- | --- |
+| `session_secret` | `SESSION_SECRET` | `None` (env-gated: required when `app_env != "development"`) | RESTART ONLY | `Secrets` | `Secrets` | DONE (Phase 5.0 C1) — typed boundary; no consumers wired |
+| `csrf_secret` | `CSRF_SECRET` | `None` (env-gated: required when `app_env != "development"`) | RESTART ONLY | `Secrets` | `Secrets` | DONE (Phase 5.0 C1) — typed boundary; no consumers wired |
+
+The `Secrets` validator enforces the rule at construction time:
+
+- `app_env == "development"` (the default): secrets may be `None` or
+  empty. No failure.
+- Any other `app_env` value (e.g. `staging`, `production`, `verify`):
+  both `SESSION_SECRET` and `CSRF_SECRET` must resolve to non-empty
+  values, or `ValueError` raises at `Settings()` construction.
+
+Empty string is treated as missing. Pydantic `SecretStr` is used to
+prevent accidental logging of the secret value. No `Secret`-anything
+env-var reads happen outside `backend/config/secrets.py` — the
+isolation allowlist in `tests/test_config_isolation.py` enforces
+this. The verify harness sets `APP_ENV=verify` (see
+`scripts/verify_backend.sh:150,393`); this is the one non-development
+env the V1 verification exercises, so the secrets gate is a real
+constraint at live-verify time.
+
+**No consumers in V1.** Auth (Phase 5.4 future) will be the first
+real consumer; until then, the seam exists, the rules are enforced,
+and the env vars are documented.
 
 ### Settings is `frozen=True`
 
@@ -152,6 +188,8 @@ adding config flags for them would be speculative. Justified by
 | `POSTGRES_DB` | `database.postgres_db` | INFRASTRUCTURE | NEW consumer. |
 | `POSTGRES_USER` | `database.postgres_user` | INFRASTRUCTURE | NEW consumer. |
 | `POSTGRES_PASSWORD` | `database.postgres_password` | INFRASTRUCTURE | NEW consumer. |
+| `SESSION_SECRET` | `secrets.session_secret` | OPERATIONAL | NEW in Phase 5.0 C1. Env-gated: required when `app_env != "development"`. `SecretStr` typed. |
+| `CSRF_SECRET` | `secrets.csrf_secret` | OPERATIONAL | NEW in Phase 5.0 C1. Env-gated: required when `app_env != "development"`. `SecretStr` typed. |
 
 ### Process-supervisor env (NOT in `.env.example`)
 
@@ -341,17 +379,26 @@ prevents future drift.
     app.state / injected dependency, NOT direct get_settings().
     Structural test test_config_isolation.py still passes.
 
+[ ] If a sub-model was added (Phase 5.0 example: `Secrets`):
+    - `ALLOWED_CONFIG_READERS` in tests/test_config_isolation.py
+      updated with the new module path.
+    - Test file in `backend/tests/config/test_<sub>.py` covers:
+      construction in dev (with and without secrets), construction in
+      non-dev (raises on missing), env-var resolution, frozen mutation.
+
 [ ] Unit test in backend/tests/config/ covering:
     - default value
     - env-var resolution
     - validator accepts good / rejects bad input
     - frozen mutation raises
 
-[ ] scripts/verify_backend.sh still 49/49 PASS.
+[ ] scripts/verify_backend.sh still 49/49 PASS (or higher after
+    new probe checks land — Phase 5.0 C2 will extend it).
 
 [ ] TECH_SPEC.md updated if the architectural meaning changed
     (e.g., a new lifecycle diagram node, a new explicit carve-out,
-    or a new reload side-effect).
+    or a new reload side-effect). Phase 5.0 C3 lands TECH_SPEC §13h
+    and ADR-0022 in their own commit.
 ```
 
 ### When you add a new field to `backend.config.settings.Settings` (or
@@ -401,6 +448,7 @@ owner**. The values mean:
 | --- | --- |
 | `Settings` | The field lives on `backend.config.settings.Settings` directly. |
 | `DatabaseSettings` | The field lives on the sub-model `backend.config.database.DatabaseSettings`. |
+| `Secrets` | The field lives on the sub-model `backend.config.secrets.Secrets` (Phase 5.0 C1). |
 | `process supervisor` | The setting is owned by uvicorn / shell — NOT in `Settings`. Documented for cross-reference only. |
 | `compose only` (legacy) | Pre-Phase-3.3 — the env var was declared in `.env.example` but unread by the app. Kept only on rows describing migration history. |
 
