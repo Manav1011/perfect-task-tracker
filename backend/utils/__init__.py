@@ -1,0 +1,1 @@
+"""Pure helpers. No I/O, no business logic."""

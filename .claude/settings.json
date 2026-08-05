@@ -1,0 +1,17 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8000",
+    "ANTHROPIC_AUTH_TOKEN": "97f5482590888eaa0afe9e173babd87c9abae1f5",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_MODEL": "qwen-3.6",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen-3.6",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen-3.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3.6"
+  },
+  "permissions": {
+    "allow": [
+      "Bash"
+    ]
+  }
+}

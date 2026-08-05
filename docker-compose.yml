@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ptt-postgres
+    restart: unless-stopped
+    # Non-default host port (5433) to avoid clashing with a local Postgres.
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ptt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ptt}
+      POSTGRES_DB: ${POSTGRES_DB:-ptt}
+    volumes:
+      - ptt_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-ptt} -d ${POSTGRES_DB:-ptt}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  ptt_postgres_data:
+    name: ptt_postgres_data
